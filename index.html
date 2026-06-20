@@ -83,7 +83,18 @@
   .pill.meld{color:#0a3d27;background:var(--gold);}
   .pill.dealer{color:#0a3d27;background:linear-gradient(180deg,#ffe09a,var(--gold));font-weight:700;}
   .pill.wins{color:#cdeede;background:rgba(58,169,160,.3);}
+  .pill.wins{color:#cdeede;background:rgba(58,169,160,.3);}
+  .pill.money{color:#06351f;background:linear-gradient(180deg,#c7f2d6,#7fd6a3);font-weight:700;}
+  .pill.rec{color:#e7f1ea;background:rgba(255,255,255,.09);letter-spacing:.01em;}
   .pill.timer{color:#0a3d27;background:#ffd97a;font-weight:700;}
+  .pot-wrap{text-align:center;margin:2px 0 12px;}
+  .potchip{display:inline-block;font-family:var(--display);font-weight:700;font-size:14px;color:#06351f;
+    background:linear-gradient(180deg,#ffe09a,var(--gold));padding:7px 18px;border-radius:999px;
+    box-shadow:0 3px 0 #9a6710,0 5px 10px rgba(0,0,0,.35);}
+  .name-row{margin:10px 0 4px;}
+  .name-row input{width:100%;background:rgba(0,0,0,.3);border:1.5px solid rgba(244,181,63,.5);border-radius:11px;
+    color:var(--cream);padding:12px 13px;font-family:var(--body);font-size:15px;}
+  .name-row input:focus{outline:none;border-color:var(--gold);}
 
   .mini-hand{display:flex;gap:3px;flex-wrap:wrap;}
   .cardback{width:22px;height:32px;border-radius:5px;background:repeating-linear-gradient(45deg,#0a4530 0 6px,#0d5c3c 6px 12px);
@@ -223,6 +234,7 @@
         <div class="table-rail"><div class="felt">
         <div class="opponents" id="opponents"></div>
 
+        <div class="pot-wrap"><span class="potchip" id="potChip">Pot —</span></div>
         <div class="center-piles">
           <div class="stack drawpile">
             <div class="label">Draw pile</div>
@@ -239,7 +251,7 @@
 
         <div class="myseat" id="myseat">
           <div class="myseat-head">
-            <h2>You <span class="badges" id="myBadges"></span></h2>
+            <h2><span id="myName">You</span> <span class="badges" id="myBadges"></span></h2>
             <span class="pill" id="myPoints">Counts: 0 pts</span>
           </div>
           <div class="melds-row" id="myMelds"></div>
@@ -316,13 +328,37 @@
   </div>
 </div>
 
+<!-- Name entry -->
+<div class="scrim" id="nameScrim">
+  <div class="modal">
+    <h2>Take a seat</h2>
+    <p>Enter your name for the table. Everyone starts with <b>$50</b> and each round costs <b>$10</b> to play. (Your name will carry over to multiplayer.)</p>
+    <div class="name-row">
+      <input id="nameInput" type="text" maxlength="18" placeholder="Your name (e.g. Boy)" />
+    </div>
+    <div class="modal-actions"><button id="nameStart">Deal me in</button></div>
+  </div>
+</div>
+
+<!-- Busted out -->
+<div class="scrim" id="bustScrim">
+  <div class="modal">
+    <h2>You're out of the game</h2>
+    <p id="bustReason"></p>
+    <table class="score-tbl" id="bustTable"></table>
+    <div class="modal-actions"><button id="bustNew">Create a new game</button></div>
+  </div>
+</div>
+
 <script>
 "use strict";
 /* ===================== constants & helpers ===================== */
 const SUITS=["♠","♥","♦","♣"]; const RED=new Set(["♥","♦"]);
 const RANK_LABEL={1:"A",11:"J",12:"Q",13:"K"};
-const PLAYER_NAMES=["You","Aling Nena","Mang Tonio"];
 const AI_DELAY_MS=8000;
+const START_MONEY=50; const ANTE=10;
+const AI_NAMES=["Aling Nena","Mang Tonio","Kuya Boy","Ate Vi","Lolo Ben","Tita Baby","Pareng Jun","Mareng Susan","Inting","Dado","Tisoy","Kapitan","Aling Cora","Mang Berto","Bunso","Idol"];
+function pickAIName(used){const avail=AI_NAMES.filter(n=>!used.includes(n));const pool=avail.length?avail:AI_NAMES;return pool[Math.floor(Math.random()*pool.length)];}
 
 const $=id=>document.getElementById(id);
 function rankLabel(r){return RANK_LABEL[r]||String(r);}
@@ -390,26 +426,54 @@ function flagNewCard(id){
 }
 function clearNewCard(){newCardId=null;if(newCardTimer){clearTimeout(newCardTimer);newCardTimer=null;}}
 
-function freshPlayers(){
-  return PLAYER_NAMES.map((name,i)=>({name,hand:[],groups:[],melds:[],hasMelded:false,isHuman:i===0,wins:(G&&G.players?G.players[i].wins:0)}));
+function makePlayers(playerName){
+  const used=[playerName];
+  const a=pickAIName(used);used.push(a);
+  const b=pickAIName(used);
+  const mk=(name,human)=>({name,isHuman:human,money:START_MONEY,rec:{w:0,l:0,d:0},hand:[],groups:[],melds:[],hasMelded:false});
+  return [mk(playerName,true),mk(a,false),mk(b,false)];
 }
-function deal(dealer){
+function newMatch(playerName){
   clearAI();clearNewCard();
+  const players=makePlayers(playerName);
+  G={players,stock:[],discard:[],dealer:0,current:0,turnCount:0,phase:"play",
+     lastSapawTurn:-99,lastMeldTurn:-99,lastMover:null,over:false,aiCountdown:0,pot:0};
+  resetLog();
+  log(`Welcome, <b>${players[0].name}</b>. Everyone buys in at $${START_MONEY}. Each round costs $${ANTE}.`,true);
+  beginRound(Math.floor(Math.random()*3));
+}
+function replaceAI(i){
+  const old=G.players[i].name;
+  const nn=pickAIName(G.players.map(p=>p.name));
+  Object.assign(G.players[i],{name:nn,money:START_MONEY,rec:{w:0,l:0,d:0},hand:[],groups:[],melds:[],hasMelded:false});
+  log(`${old} busted out. <b>${nn}</b> takes the seat with $${START_MONEY}.`,false);
+  addChat(null,`${old} left the table. ${nn} sits down with $${START_MONEY}.`,true);
+}
+function beginRound(dealer){
+  clearAI();clearNewCard();
+  $("overScrim").classList.remove("show");
+  // replace any AI that can't cover the ante
+  for(let i=1;i<3;i++)if(G.players[i].money<ANTE)replaceAI(i);
+  // human can't cover the ante -> busted out
+  if(G.players[0].money<ANTE)return showBust();
+  // antes into the pot
+  G.pot=0;
+  for(const p of G.players){p.money-=ANTE;G.pot+=ANTE;}
+  // deal
   const deck=shuffle(makeDeck());
-  const players=freshPlayers();
-  for(let n=0;n<12;n++)for(let p=0;p<3;p++)players[p].hand.push(deck.pop());
-  players[dealer].hand.push(deck.pop());
-  const discard=[deck.pop()];
-  for(const p of players)p.hand=sortHand(p.hand);
-  G={players,stock:deck,discard,dealer,current:dealer,turnCount:0,phase:"play",
-     lastSapawTurn:-99,lastMeldTurn:-99,lastMover:null,over:false,aiCountdown:0};
+  for(const p of G.players){p.hand=[];p.groups=[];p.melds=[];p.hasMelded=false;}
+  for(let n=0;n<12;n++)for(let pi=0;pi<3;pi++)G.players[pi].hand.push(deck.pop());
+  G.players[dealer].hand.push(deck.pop());
+  for(const p of G.players)p.hand=sortHand(p.hand);
+  G.stock=deck;G.discard=[deck.pop()];
+  G.dealer=dealer;G.current=dealer;G.turnCount=0;G.phase="play";
+  G.lastSapawTurn=-99;G.lastMeldTurn=-99;G.lastMover=null;G.over=false;G.aiCountdown=0;
   armedId=null;
-  log(`New deal. <b>${players[dealer].name}</b> ${dealer===0?"are":"is"} dealer (13 cards) and start${dealer===0?"":"s"}.`,dealer===0);
-  setBanner(dealer===0?`You dealt — you hold 13. <b>Meld if you can, then discard.</b>`:`<b>${players[dealer].name}</b> deals and starts.`);
+  log(`New round. Pot $${G.pot}. <b>${G.players[dealer].name}</b> deals (13) and starts.`,dealer===0);
+  setBanner(dealer===0?`You dealt — you hold 13. <b>Meld if you can, then discard.</b>`:`<b>${G.players[dealer].name}</b> deals and starts.`);
   render();
   if(G.current!==0)scheduleAI();
 }
-function newGame(){ if(G)G.players=null; deal(Math.floor(Math.random()*3)); }
 
 /* ===================== builders ===================== */
 function cardEl(c,small){
@@ -437,8 +501,9 @@ function render(){
     const head=document.createElement("div");head.className="seat-head";
     const badges=[];
     if(G.dealer===i)badges.push(`<span class="pill dealer">Dealer</span>`);
+    badges.push(`<span class="pill money">$${p.money}</span>`);
+    badges.push(`<span class="pill rec">${p.rec.w}W&middot;${p.rec.l}L&middot;${p.rec.d}D</span>`);
     badges.push(p.hasMelded?`<span class="pill meld">Melded</span>`:`<span class="pill burn">Burned</span>`);
-    if(p.wins)badges.push(`<span class="pill wins">${p.wins} ${p.wins===1?"win":"wins"}</span>`);
     if(G.current===i&&!G.over&&G.aiCountdown>0)badges.push(`<span class="pill timer">moves in ${G.aiCountdown}s</span>`);
     head.innerHTML=`<div class="who"><span class="dot"></span>${p.name}</div><div class="badges">${badges.join("")}</div>`;
     seat.appendChild(head);
@@ -474,13 +539,16 @@ function render(){
 
   const myseat=$("myseat");
   myseat.className="myseat"+(G.current===0&&!G.over?" active":"")+(G.lastMover===0&&G.current!==0?" prev":"");
+  $("myName").textContent=me.name;
   const mb=$("myBadges");
   let mybadges=[];
   if(G.dealer===0)mybadges.push(`<span class="pill dealer">Dealer</span>`);
+  mybadges.push(`<span class="pill money">$${me.money}</span>`);
+  mybadges.push(`<span class="pill rec">${me.rec.w}W&middot;${me.rec.l}L&middot;${me.rec.d}D</span>`);
   mybadges.push(me.hasMelded?`<span class="pill meld">Melded</span>`:`<span class="pill burn">Burned</span>`);
-  if(me.wins)mybadges.push(`<span class="pill wins">${me.wins} ${me.wins===1?"win":"wins"}</span>`);
   mb.innerHTML=mybadges.join("");
   $("myPoints").textContent="Counts: "+countedPoints(me)+" pts";
+  $("potChip").textContent=G.pot>0?`Pot $${G.pot}`:"Pot —";
 
   const mm=$("myMelds");mm.innerHTML="";
   const addable=canArmAdd();
@@ -779,6 +847,7 @@ function aiTurn(){
   p.hand=p.hand.filter(c=>cardId(c)!==cardId(card));
   G.discard.push(card);
   log(`${p.name} discarded ${rankLabel(card.rank)}${card.suit}.`,false);
+  if(p.hand.length===0)return endRound(i,"tongits");
   render();endTurn();
 }
 function aiChooseDiscard(hand){
@@ -790,43 +859,71 @@ function aiChooseDiscard(hand){
 /* ===================== round end ===================== */
 function endRound(winnerOrCaller,reason){
   clearAI();G.over=true;
-  let title,reasonText,winner;
+  let winners=[],title,reasonText,draw=false;
   if(reason==="tongits"){
-    winner=winnerOrCaller;
-    title=winner===0?"Tongits! You win 🎉":`${G.players[winner].name} hits Tongits`;
-    reasonText=`${winner===0?"You":G.players[winner].name} emptied ${winner===0?"your":"their"} hand — an outright Tongits win.`;
+    winners=[winnerOrCaller];
+    title=winnerOrCaller===0?"Tongits! You win 🎉":`${G.players[winnerOrCaller].name} hits Tongits`;
+    reasonText=`${winnerOrCaller===0?"You":G.players[winnerOrCaller].name} emptied ${winnerOrCaller===0?"your":"their"} hand — an outright Tongits win.`;
   } else {
     const rows=G.players.map((p,i)=>({i,pts:countedPoints(p),burned:!p.hasMelded}));
     const eligible=rows.filter(r=>!r.burned);
     const pool=eligible.length?eligible:rows;
-    const best=pool.reduce((a,b)=>b.pts<a.pts?b:a);
-    winner=best.i;
-    if(reason==="call"){
-      title=winner===0?"You win the call 🎉":`${G.players[winner].name} wins the call`;
-      reasonText=`${winnerOrCaller===0?"You":G.players[winnerOrCaller].name} called. Lowest points (melds in hand excluded) among players who laid a meld wins.`;
+    const low=Math.min(...pool.map(r=>r.pts));
+    winners=pool.filter(r=>r.pts===low).map(r=>r.i);
+    draw=winners.length>1;
+    if(draw){
+      const names=winners.map(w=>w===0?"You":G.players[w].name).join(" & ");
+      title=`Draw — ${names} tie`;
+      reasonText=`Tied on ${low} point${low===1?"":"s"} (melds in hand excluded). The $${G.pot} pot is split between them, and the next dealer is chosen at random among them.`;
+    } else if(reason==="call"){
+      title=winners[0]===0?"You win the call 🎉":`${G.players[winners[0]].name} wins the call`;
+      reasonText=`${winnerOrCaller===0?"You":G.players[winnerOrCaller].name} called. Lowest count among players who laid a meld wins.`;
     } else {
-      title=winner===0?"Draw pile empty — you win 🎉":`Draw pile empty — ${G.players[winner].name} wins`;
-      reasonText="The draw pile ran out, so the round is scored. Melds still in hand don't count.";
+      title=winners[0]===0?"Draw pile empty — you win 🎉":`Draw pile empty — ${G.players[winners[0]].name} wins`;
+      reasonText="The draw pile ran out, so the round is scored. Melds in hand don't count.";
     }
   }
-  G.players[winner].wins=(G.players[winner].wins||0)+1;
-  G.dealer=winner;
-  setBanner(title+` — <b>${G.players[winner].name}</b> deals next.`);
-  addChat(null,`${G.players[winner].name} won the round.`,true);
-  showOver(title,reasonText,winner,reason);
+  // payout the pot
+  const pot=G.pot,share=Math.floor(pot/winners.length);let rem=pot-share*winners.length;
+  const payouts={};
+  winners.forEach((w,idx)=>{const amt=share+(idx<rem?1:0);G.players[w].money+=amt;payouts[w]=amt;});
+  G.pot=0;
+  // win / loss / draw records
+  G.players.forEach((p,i)=>{ if(winners.includes(i))p.rec[draw?"d":"w"]++; else p.rec.l++; });
+  // dealer = winner (random among tied)
+  G.dealer=winners[Math.floor(Math.random()*winners.length)];
+  setBanner(title+` — <b>${G.dealer===0?"You":G.players[G.dealer].name}</b> deal${G.dealer===0?"":"s"} next.`);
+  addChat(null,draw?`Draw — pot split between ${winners.map(w=>G.players[w].name).join(" & ")}.`:`${G.players[winners[0]].name} won $${payouts[winners[0]]}.`,true);
+  showOver(title,reasonText,winners,reason,payouts,draw);
   render();
 }
-function showOver(title,reasonText,winner,reason){
+function showOver(title,reasonText,winners,reason,payouts,draw){
   $("overTitle").textContent=title;$("overReason").innerHTML=reasonText;
-  let html="<tr><th>Player</th><th>Status</th><th>Counts</th></tr>";
+  let html="<tr><th>Player</th><th>Result</th><th>Count</th><th>Pot</th><th>Money</th></tr>";
   G.players.forEach((p,i)=>{
-    const pts=countedPoints(p);const burned=!p.hasMelded;
-    const cls=i===winner?"win":(burned?"burned":"");
-    const status=reason==="tongits"&&i===winner?"Tongits":(burned?"Burned":"Melded");
-    html+=`<tr class="${cls}"><td>${p.name}${i===winner?" 👑":""}${G.dealer===i?" 🃏":""}</td><td>${status}</td><td>${reason==="tongits"&&i===winner?"0":pts}</td></tr>`;
+    const pts=countedPoints(p),burned=!p.hasMelded,isW=winners.includes(i);
+    const cls=isW?"win":(burned?"burned":"");
+    const result=isW?(draw?"Draw":(reason==="tongits"?"Tongits":"Win")):(burned?"Burned":"Loss");
+    const potCell=payouts[i]?`+$${payouts[i]}`:"—";
+    const countCell=(reason==="tongits"&&isW&&!draw)?"0":pts;
+    html+=`<tr class="${cls}"><td>${p.name}${isW?" 👑":""}${G.dealer===i?" 🃏":""}</td><td>${result}</td><td>${countCell}</td><td>${potCell}</td><td>$${p.money}</td></tr>`;
   });
   $("overTable").innerHTML=html;
   $("overScrim").classList.add("show");
+}
+function showBust(){
+  G.over=true;clearAI();
+  const me=G.players[0];
+  $("bustReason").innerHTML=`You're down to <b>$${me.money}</b> — not enough to cover the $${ANTE} buy-in, so you're out of this game.`;
+  let html="<tr><th>Your stats this game</th><th></th></tr>";
+  html+=`<tr><td>Money left</td><td>$${me.money}</td></tr>`;
+  html+=`<tr class="win"><td>Wins</td><td>${me.rec.w}</td></tr>`;
+  html+=`<tr class="burned"><td>Losses</td><td>${me.rec.l}</td></tr>`;
+  html+=`<tr><td>Draws</td><td>${me.rec.d}</td></tr>`;
+  $("bustTable").innerHTML=html;
+  $("bustScrim").classList.add("show");
+  setBanner("You're out of money — start a new game to play again.");
+  render();
 }
 
 /* ===================== discard viewer ===================== */
@@ -856,10 +953,29 @@ function setBanner(html){$("statusLine").innerHTML=html;}
 const logLines=[];
 function log(html,me){logLines.push(`<div class="${me?'me':''}">${html}</div>`);if(logLines.length>80)logLines.shift();const el=$("log");el.innerHTML=logLines.join("");el.scrollTop=el.scrollHeight;}
 
+/* ===================== name entry ===================== */
+function openNameModal(){
+  const inp=$("nameInput");
+  inp.value=(G&&G.players&&G.players[0].name!=="You")?G.players[0].name:"";
+  $("overScrim").classList.remove("show");
+  $("bustScrim").classList.remove("show");
+  $("nameScrim").classList.add("show");
+  setTimeout(()=>inp.focus(),60);
+}
+function startFromNameModal(){
+  let name=$("nameInput").value.trim().replace(/[<>]/g,"").slice(0,18);
+  if(!name)name="You";
+  $("nameScrim").classList.remove("show");
+  newMatch(name);
+}
+
 /* ===================== wire up ===================== */
 function resetLog(){logLines.length=0;$("log").innerHTML="";}
-$("newGameBtn").onclick=()=>{$("overScrim").classList.remove("show");resetLog();newGame();};
-$("overNew").onclick=()=>{$("overScrim").classList.remove("show");resetLog();deal(G.dealer);};
+$("newGameBtn").onclick=()=>openNameModal();
+$("overNew").onclick=()=>{$("overScrim").classList.remove("show");beginRound(G.dealer);};
+$("bustNew").onclick=()=>openNameModal();
+$("nameStart").onclick=startFromNameModal;
+$("nameInput").addEventListener("keydown",e=>{if(e.key==="Enter")startFromNameModal();});
 $("rulesBtn").onclick=()=>$("rulesScrim").classList.add("show");
 $("rulesClose").onclick=()=>$("rulesScrim").classList.remove("show");
 $("rulesScrim").onclick=e=>{if(e.target===$("rulesScrim"))$("rulesScrim").classList.remove("show");};
@@ -870,7 +986,7 @@ $("chatSend").onclick=sendChat;
 $("chatInput").addEventListener("keydown",e=>{if(e.key==="Enter")sendChat();});
 
 addChat(null,"Table chat is a local preview — messages stay on this device until multiplayer arrives.",true);
-newGame();
+openNameModal();
 </script>
 </body>
 </html>
