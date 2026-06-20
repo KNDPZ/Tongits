@@ -145,6 +145,9 @@
   @keyframes candglow{0%,100%{box-shadow:0 0 0 2px rgba(244,181,63,.45),0 0 9px rgba(244,181,63,.3);}50%{box-shadow:0 0 0 2px rgba(244,181,63,.85),0 0 16px rgba(244,181,63,.6);}}
   .card.picksel{transform:translateY(-12px);box-shadow:0 0 0 3px var(--good),0 0 16px rgba(70,192,138,.75)!important;animation:none;}
   .pile-target.anchor{box-shadow:0 0 0 3px var(--good),0 0 18px rgba(70,192,138,.6);}
+  .fly-card{position:fixed;z-index:900;pointer-events:none;transform:translate(-50%,-50%);box-shadow:0 8px 18px rgba(0,0,0,.55);}
+  .fly-card.cardback{width:52px;height:74px;border-radius:9px;}
+  .fly-card.fly-go{transition:left .42s cubic-bezier(.45,.05,.25,1), top .42s cubic-bezier(.45,.05,.25,1), transform .42s ease-out;}
 
   .tray{display:flex;gap:9px;flex-wrap:wrap;padding:10px;border-radius:13px;background:rgba(0,0,0,.14);
     box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.05);min-height:72px;align-items:flex-start;}
@@ -367,7 +370,7 @@ function pickAIName(used){const avail=AI_NAMES.filter(n=>!used.includes(n));cons
 const $=id=>document.getElementById(id);
 function rankLabel(r){return RANK_LABEL[r]||String(r);}
 function cardId(c){return c.rank+c.suit;}
-function cardPoints(c){if(c.rank===1)return 1;if(c.rank>=11)return 10;return c.rank;}
+function cardPoints(c){return c.rank;} // A=1, 2-10=face, J=11, Q=12, K=13
 function handPoints(h){return h.reduce((s,c)=>s+cardPoints(c),0);}
 function makeDeck(){const d=[];for(const s of SUITS)for(let r=1;r<=13;r++)d.push({rank:r,suit:s});return d;}
 function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
@@ -488,8 +491,36 @@ function cardEl(c,small){
   return el;
 }
 function backEl(){const el=document.createElement("div");el.className="cardback";return el;}
-function meldEl(meld,owner,addable){
+
+/* ===================== card-fly animations ===================== */
+let _flyStagger=0;
+function areaEl(i){return i===0?$("myHand"):$("seat-"+i);}
+function meldElByIdx(owner,idx){return document.querySelector(`.meld[data-owner="${owner}"][data-meldidx="${idx}"]`);}
+function reducedMotion(){return window.matchMedia&&window.matchMedia("(prefers-reduced-motion: reduce)").matches;}
+function flyBetween(fromEl,toEl,opts){
+  if(reducedMotion()||!fromEl||!toEl)return;
+  const fr=fromEl.getBoundingClientRect(),tr=toEl.getBoundingClientRect();
+  if(!fr.width||!tr.width)return;
+  const delay=_flyStagger;_flyStagger+=130;
+  setTimeout(()=>doFly(fr,tr,opts||{}),delay);
+}
+function resetFly(){_flyStagger=0;}
+function doFly(fr,tr,opts){
+  let clone;
+  if(opts.faceDown){clone=document.createElement("div");clone.className="cardback fly-card";}
+  else{clone=cardEl(opts.card||{rank:1,suit:"♠"});clone.classList.add("fly-card");}
+  document.body.appendChild(clone);
+  const fx=fr.left+fr.width/2,fy=fr.top+fr.height/2,tx=tr.left+tr.width/2,ty=tr.top+tr.height/2;
+  clone.style.left=fx+"px";clone.style.top=fy+"px";
+  void clone.offsetWidth;
+  clone.classList.add("fly-go");
+  clone.style.left=tx+"px";clone.style.top=ty+"px";
+  clone.style.transform="translate(-50%,-50%) rotate(9deg)";
+  setTimeout(()=>clone.remove(),470);
+}
+function meldEl(meld,owner,idx,addable){
   const w=document.createElement("div");w.className="meld"+(addable?" addable":"");
+  w.dataset.owner=owner;w.dataset.meldidx=idx;
   for(const c of meld.cards)w.appendChild(cardEl(c,true));
   if(addable){w.title="Add the armed card here";w.onclick=()=>tryAddToMeld(owner,meld);}
   return w;
@@ -502,11 +533,12 @@ function render(){
   for(let i=1;i<3;i++){
     const p=G.players[i];
     const seat=document.createElement("div");
+    seat.id="seat-"+i;
     seat.className="seat"+(G.current===i&&!G.over?" active":"")+(G.lastMover===i&&G.current!==i?" prev":"");
     const head=document.createElement("div");head.className="seat-head";
     const badges=[];
     if(G.dealer===i)badges.push(`<span class="pill dealer">Dealer</span>`);
-    badges.push(`<span class="pill money">$${p.money}</span>`);
+    badges.push(`<span class="pill money">🪙 $${p.money}</span>`);
     badges.push(`<span class="pill rec">${p.rec.w}W&middot;${p.rec.l}L&middot;${p.rec.d}D</span>`);
     badges.push(p.hasMelded?`<span class="pill meld">Melded</span>`:`<span class="pill burn">Burned</span>`);
     if(G.current===i&&!G.over&&G.aiCountdown>0)badges.push(`<span class="pill timer">moves in ${G.aiCountdown}s</span>`);
@@ -519,7 +551,7 @@ function render(){
     row.appendChild(mini);row.appendChild(cnt);seat.appendChild(row);
     const mr=document.createElement("div");mr.className="melds-row";
     const addable=canArmAdd();
-    for(let mi=0;mi<p.melds.length;mi++)mr.appendChild(meldEl(p.melds[mi],i,addable&&armedCardCanJoin(p.melds[mi])));
+    for(let mi=0;mi<p.melds.length;mi++)mr.appendChild(meldEl(p.melds[mi],i,mi,addable&&armedCardCanJoin(p.melds[mi])));
     seat.appendChild(mr);
     opp.appendChild(seat);
   }
@@ -549,16 +581,16 @@ function render(){
   const mb=$("myBadges");
   let mybadges=[];
   if(G.dealer===0)mybadges.push(`<span class="pill dealer">Dealer</span>`);
-  mybadges.push(`<span class="pill money">$${me.money}</span>`);
+  mybadges.push(`<span class="pill money">🪙 $${me.money}</span>`);
   mybadges.push(`<span class="pill rec">${me.rec.w}W&middot;${me.rec.l}L&middot;${me.rec.d}D</span>`);
   mybadges.push(me.hasMelded?`<span class="pill meld">Melded</span>`:`<span class="pill burn">Burned</span>`);
   mb.innerHTML=mybadges.join("");
   $("myPoints").textContent="Counts: "+countedPoints(me)+" pts";
-  $("potChip").textContent=G.pot>0?`Pot $${G.pot}`:"Pot —";
+  $("potChip").textContent=G.pot>0?`🪙 Pot $${G.pot}`:"🪙 Pot —";
 
   const mm=$("myMelds");mm.innerHTML="";
   const addable=canArmAdd();
-  for(let mi=0;mi<me.melds.length;mi++)mm.appendChild(meldEl(me.melds[mi],0,addable&&armedCardCanJoin(me.melds[mi])));
+  for(let mi=0;mi<me.melds.length;mi++)mm.appendChild(meldEl(me.melds[mi],0,mi,addable&&armedCardCanJoin(me.melds[mi])));
 
   const mh=$("myHand");mh.innerHTML="";
   for(const c of me.hand){
@@ -746,12 +778,13 @@ function humanDraw(source){
   if(source!=="stock")return;
   const me=G.players[0];
   if(!G.stock.length)return;
-  discardPick=null;
+  discardPick=null;resetFly();
   const card=G.stock.pop();me.hand.push(card);
   flagNewCard(cardId(card));
   log(`You drew from the draw pile.`,true);
   G.phase="play";setBanner("Arrange, lay melds, then <b>discard</b> to end your turn.");
   armedId=null;render();
+  flyBetween($("drawTarget"),$("myHand"),{card,faceDown:false});
   const mh=$("myHand");if(mh)mh.scrollLeft=mh.scrollWidth;
 }
 /* --- taking from the discard: player chooses which cards form the meld --- */
@@ -788,6 +821,7 @@ function confirmDiscardPick(){
   if(allHandCards(me).length===0)return endRound(0,"tongits");
   setBanner("Meld laid from the discard. Now arrange and <b>discard</b> to end your turn.");
   render();
+  resetFly();flyBetween($("discardTarget"),meldElByIdx(0,me.melds.length-1),{card:top});
 }
 function layGroup(gi){
   if(G.current!==0||G.phase!=="play"||G.over)return;
@@ -802,6 +836,8 @@ function layGroup(gi){
 function tryAddToMeld(owner,meld){
   if(!canArmAdd())return;
   const card=findArmedCard();if(!card||!canAddToMeld(meld,card)){setBanner("That card doesn't fit there.");return;}
+  const mi=G.players[owner].melds.indexOf(meld);
+  resetFly();flyBetween($("myHand"),meldElByIdx(owner,mi),{card});
   removeCardFromHandModel(cardId(card));
   meld.cards=sortHand(meld.cards.concat([card]));
   G.lastSapawTurn=G.turnCount;
@@ -816,6 +852,7 @@ function discardCard(id){
   G.discard.push(card);
   log(`You discarded ${rankLabel(card.rank)}${card.suit}.`,true);
   armedId=null;
+  resetFly();flyBetween($("myHand"),$("discardTarget"),{card});
   if(allHandCards(G.players[0]).length===0)return endRound(0,"tongits");
   endTurn();
 }
@@ -853,16 +890,18 @@ function scheduleAI(){
 function aiTurn(){
   if(G.over)return;
   const i=G.current;const p=G.players[i];
+  resetFly();
   if(G.phase==="draw"){
     const top=G.discard[G.discard.length-1];let take=null;
     if(top){const mc=buildMeldWithCard(p.hand,top);if(mc)take=mc;}
     if(take){
+      flyBetween($("discardTarget"),$("seat-"+i),{card:top});
       G.discard.pop();const ids=new Set(take.map(cardId));
       p.hand=p.hand.filter(c=>!ids.has(cardId(c)));
       p.melds.push({type:meldType(take),cards:sortHand(take)});p.hasMelded=true;G.lastMeldTurn=G.turnCount;
       log(`${p.name} took ${rankLabel(top.rank)}${top.suit} and laid a ${meldType(take)}.`,false);
       if(p.hand.length===0)return endRound(i,"tongits");
-    } else {const card=G.stock.pop();p.hand.push(card);log(`${p.name} drew from the draw pile.`,false);}
+    } else {flyBetween($("drawTarget"),$("seat-"+i),{faceDown:true});const card=G.stock.pop();p.hand.push(card);log(`${p.name} drew from the draw pile.`,false);}
     G.phase="play";
   }
   let safety=0;
@@ -880,8 +919,10 @@ function aiTurn(){
     while(added){
       added=false;
       for(const card of p.hand.slice()){
-        for(const pl of G.players)for(const m of pl.melds){
+        for(const pl of G.players)for(let mIdx=0;mIdx<pl.melds.length;mIdx++){
+          const m=pl.melds[mIdx];
           if(canAddToMeld(m,card)){
+            flyBetween($("seat-"+i),meldElByIdx(G.players.indexOf(pl),mIdx),{card});
             p.hand=p.hand.filter(c=>cardId(c)!==cardId(card));
             m.cards=sortHand(m.cards.concat([card]));G.lastSapawTurn=G.turnCount;
             log(`${p.name} added ${rankLabel(card.rank)}${card.suit} to a ${m.type} (sapaw).`,false);
@@ -902,6 +943,7 @@ function aiTurn(){
   const card=aiChooseDiscard(p.hand);
   p.hand=p.hand.filter(c=>cardId(c)!==cardId(card));
   G.discard.push(card);
+  flyBetween($("seat-"+i),$("discardTarget"),{card});
   log(`${p.name} discarded ${rankLabel(card.rank)}${card.suit}.`,false);
   if(p.hand.length===0)return endRound(i,"tongits");
   render();endTurn();
@@ -962,7 +1004,7 @@ function showOver(title,reasonText,winners,reason,payouts,draw){
     const result=isW?(draw?"Draw":(reason==="tongits"?"Tongits":"Win")):(burned?"Burned":"Loss");
     const potCell=payouts[i]?`+$${payouts[i]}`:"—";
     const countCell=(reason==="tongits"&&isW&&!draw)?"0":pts;
-    html+=`<tr class="${cls}"><td>${p.name}${isW?" 👑":""}${G.dealer===i?" 🃏":""}</td><td>${result}</td><td>${countCell}</td><td>${potCell}</td><td>$${p.money}</td></tr>`;
+    html+=`<tr class="${cls}"><td>${p.name}${isW?" 👑":""}${G.dealer===i?" 🃏":""}</td><td>${result}</td><td>${countCell}</td><td>${potCell}</td><td>🪙 $${p.money}</td></tr>`;
   });
   $("overTable").innerHTML=html;
   $("overScrim").classList.add("show");
@@ -972,7 +1014,7 @@ function showBust(){
   const me=G.players[0];
   $("bustReason").innerHTML=`You're down to <b>$${me.money}</b> — not enough to cover the $${ANTE} buy-in, so you're out of this game.`;
   let html="<tr><th>Your stats this game</th><th></th></tr>";
-  html+=`<tr><td>Money left</td><td>$${me.money}</td></tr>`;
+  html+=`<tr><td>Money left</td><td>🪙 $${me.money}</td></tr>`;
   html+=`<tr class="win"><td>Wins</td><td>${me.rec.w}</td></tr>`;
   html+=`<tr class="burned"><td>Losses</td><td>${me.rec.l}</td></tr>`;
   html+=`<tr><td>Draws</td><td>${me.rec.d}</td></tr>`;
