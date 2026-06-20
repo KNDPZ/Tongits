@@ -194,6 +194,18 @@
   .score-tbl tr.burned td{color:#e9a3ab;}
   .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px;flex-wrap:wrap;}
   .discard-view{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}
+  .reveal-wrap{margin-top:16px;}
+  .reveal-title{font-family:var(--display);font-size:14px;color:var(--cream);margin-bottom:4px;}
+  .reveal-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.07);}
+  .reveal-name{flex:0 0 88px;font-size:13px;color:var(--cream-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .reveal-cards{flex:1;display:flex;flex-wrap:wrap;gap:4px;}
+  .reveal-pts{flex:0 0 auto;font-size:12px;color:#9fc4ad;}
+  .rcard{display:inline-block;background:linear-gradient(160deg,#fffdf6,var(--cream));border-radius:5px;padding:2px 6px;font-weight:700;font-size:12px;font-family:var(--display);box-shadow:0 1px 3px rgba(0,0,0,.4);}
+  .rcard.red{color:var(--red);} .rcard.black{color:#222;}
+  .rcard.meldc{opacity:.4;}
+  .rempty{font-size:12px;color:#6f9684;}
+  .reveal-legend{margin-top:8px;font-size:11px;color:#9fc4ad;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+  .reveal-legend .rcard{font-size:10px;padding:1px 5px;}
 
   .drag-clone{position:fixed;z-index:999;pointer-events:none;transform:translate(-50%,-50%) rotate(3deg);filter:drop-shadow(0 8px 14px rgba(0,0,0,.6));}
 
@@ -331,6 +343,7 @@
     <h2 id="overTitle">Round over</h2>
     <p id="overReason"></p>
     <table class="score-tbl" id="overTable"></table>
+    <div id="overReveal"></div>
     <div class="modal-actions"><button id="overNew">Deal again</button></div>
   </div>
 </div>
@@ -786,6 +799,7 @@ function humanDraw(source){
   armedId=null;render();
   flyBetween($("drawTarget"),$("myHand"),{card,faceDown:false});
   const mh=$("myHand");if(mh)mh.scrollLeft=mh.scrollWidth;
+  maybeWin(0);
 }
 /* --- taking from the discard: player chooses which cards form the meld --- */
 function enterDiscardPick(){
@@ -818,7 +832,7 @@ function confirmDiscardPick(){
   me.hasMelded=true;G.lastMeldTurn=G.turnCount;
   log(`You took ${rankLabel(top.rank)}${top.suit} and melded a ${meldType(meldCards)}: ${sortHand(meldCards).map(c=>rankLabel(c.rank)+c.suit).join(" ")}.`,true);
   discardPick=null;G.phase="play";armedId=null;
-  if(allHandCards(me).length===0)return endRound(0,"tongits");
+  if(maybeWin(0))return;
   setBanner("Meld laid from the discard. Now arrange and <b>discard</b> to end your turn.");
   render();
   resetFly();flyBetween($("discardTarget"),meldElByIdx(0,me.melds.length-1),{card:top});
@@ -830,7 +844,7 @@ function layGroup(gi){
   me.melds.push({type:meldType(g),cards:sortHand(g)});me.hasMelded=true;G.lastMeldTurn=G.turnCount;
   log(`You laid a ${meldType(g)}: ${sortHand(g).map(c=>rankLabel(c.rank)+c.suit).join(" ")}.`,true);
   me.groups.splice(gi,1);
-  if(allHandCards(me).length===0)return endRound(0,"tongits");
+  if(maybeWin(0))return;
   render();
 }
 function tryAddToMeld(owner,meld){
@@ -843,7 +857,7 @@ function tryAddToMeld(owner,meld){
   G.lastSapawTurn=G.turnCount;
   log(`You added ${rankLabel(card.rank)}${card.suit} to ${owner===0?"your":G.players[owner].name+"'s"} ${meld.type} (sapaw).`,true);
   armedId=null;
-  if(allHandCards(G.players[0]).length===0)return endRound(0,"tongits");
+  if(maybeWin(0))return;
   render();
 }
 function discardCard(id){
@@ -853,7 +867,7 @@ function discardCard(id){
   log(`You discarded ${rankLabel(card.rank)}${card.suit}.`,true);
   armedId=null;
   resetFly();flyBetween($("myHand"),$("discardTarget"),{card});
-  if(allHandCards(G.players[0]).length===0)return endRound(0,"tongits");
+  if(maybeWin(0))return;
   endTurn();
 }
 function humanCall(){ if(G.current!==0||G.phase!=="play"||!callViable())return; log(`You called the round.`,true); endRound(0,"call"); }
@@ -900,7 +914,7 @@ function aiTurn(){
       p.hand=p.hand.filter(c=>!ids.has(cardId(c)));
       p.melds.push({type:meldType(take),cards:sortHand(take)});p.hasMelded=true;G.lastMeldTurn=G.turnCount;
       log(`${p.name} took ${rankLabel(top.rank)}${top.suit} and laid a ${meldType(take)}.`,false);
-      if(p.hand.length===0)return endRound(i,"tongits");
+      if(maybeWin(i))return;
     } else {flyBetween($("drawTarget"),$("seat-"+i),{faceDown:true});const card=G.stock.pop();p.hand.push(card);log(`${p.name} drew from the draw pile.`,false);}
     G.phase="play";
   }
@@ -912,7 +926,7 @@ function aiTurn(){
     p.hand=p.hand.filter(c=>!ids.has(cardId(c)));
     p.melds.push({type:m.type,cards:sortHand(m.cards)});p.hasMelded=true;G.lastMeldTurn=G.turnCount;
     log(`${p.name} laid a ${m.type}: ${m.cards.map(c=>rankLabel(c.rank)+c.suit).join(" ")}.`,false);
-    if(p.hand.length===0)return endRound(i,"tongits");
+    if(maybeWin(i))return;
   }
   if(p.hasMelded){
     let added=true;
@@ -931,7 +945,7 @@ function aiTurn(){
         }
         if(added)break;
       }
-      if(p.hand.length===0)return endRound(i,"tongits");
+      if(maybeWin(i))return;
     }
   }
   const pts=countedPoints(p);const cycleClear=(G.turnCount-G.lastMeldTurn)>=3&&(G.turnCount-G.lastSapawTurn)>=3;
@@ -945,7 +959,7 @@ function aiTurn(){
   G.discard.push(card);
   flyBetween($("seat-"+i),$("discardTarget"),{card});
   log(`${p.name} discarded ${rankLabel(card.rank)}${card.suit}.`,false);
-  if(p.hand.length===0)return endRound(i,"tongits");
+  if(maybeWin(i))return;
   render();endTurn();
 }
 function aiChooseDiscard(hand){
@@ -955,13 +969,28 @@ function aiChooseDiscard(hand){
 }
 
 /* ===================== round end ===================== */
+/* A player wins the moment they hold no counting points: either an empty hand
+   (Tongits) or only completed melds left in hand — provided they aren't burned. */
+function maybeWin(i){
+  if(G.over)return false;
+  const p=G.players[i];
+  const empty=allHandCards(p).length===0;
+  if(empty||(p.hasMelded&&countedPoints(p)===0)){endRound(i,"tongits");return true;}
+  return false;
+}
 function endRound(winnerOrCaller,reason){
   clearAI();G.over=true;discardPick=null;
   let winners=[],title,reasonText,draw=false;
   if(reason==="tongits"){
     winners=[winnerOrCaller];
-    title=winnerOrCaller===0?"Tongits! You win 🎉":`${G.players[winnerOrCaller].name} hits Tongits`;
-    reasonText=`${winnerOrCaller===0?"You":G.players[winnerOrCaller].name} emptied ${winnerOrCaller===0?"your":"their"} hand — an outright Tongits win.`;
+    const w=winnerOrCaller,nm=w===0?"You":G.players[w].name,emptied=allHandCards(G.players[w]).length===0;
+    if(emptied){
+      title=w===0?"Tongits! You win 🎉":`${G.players[w].name} hits Tongits`;
+      reasonText=`${nm} emptied ${w===0?"your":"their"} hand — an outright Tongits win.`;
+    } else {
+      title=w===0?"All melds! You win 🎉":`${G.players[w].name} goes out on melds`;
+      reasonText=`${nm} ${w===0?"are":"is"} left holding only completed melds (zero counting points) — a winning hand.`;
+    }
   } else {
     const rows=G.players.map((p,i)=>({i,pts:countedPoints(p),burned:!p.hasMelded}));
     const eligible=rows.filter(r=>!r.burned);
@@ -1007,6 +1036,16 @@ function showOver(title,reasonText,winners,reason,payouts,draw){
     html+=`<tr class="${cls}"><td>${p.name}${isW?" 👑":""}${G.dealer===i?" 🃏":""}</td><td>${result}</td><td>${countCell}</td><td>${potCell}</td><td>🪙 $${p.money}</td></tr>`;
   });
   $("overTable").innerHTML=html;
+  // reveal remaining hands so everyone can verify the counts
+  let rev=`<div class="reveal-wrap"><div class="reveal-title">Hands revealed</div>`;
+  G.players.forEach((p)=>{
+    const cards=sortHand(allHandCards(p));const ex=meldExclusion(allHandCards(p));
+    let chips=cards.map(c=>`<span class="rcard ${ex.has(cardId(c))?'meldc':'countc'} ${RED.has(c.suit)?'red':'black'}">${rankLabel(c.rank)}${c.suit}</span>`).join("");
+    if(!cards.length)chips=`<span class="rempty">— empty —</span>`;
+    rev+=`<div class="reveal-row"><div class="reveal-name">${p.name}</div><div class="reveal-cards">${chips}</div><div class="reveal-pts">${countedPoints(p)} pts</div></div>`;
+  });
+  rev+=`<div class="reveal-legend"><span class="rcard countc black">7♠</span> counts &middot; <span class="rcard meldc black">7♠</span> meld (not counted)</div></div>`;
+  $("overReveal").innerHTML=rev;
   $("overScrim").classList.add("show");
 }
 function showBust(){
