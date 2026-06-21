@@ -320,7 +320,7 @@
     <h3>Winning</h3>
     <ul>
       <li><b>Tongits</b>: empty your hand — instant win.</li>
-      <li><b>Call</b>: allowed only when a full cycle passes with no new meld and no sapaw on the table. Lowest points wins.</li>
+      <li><b>Call</b>: at the very start of your turn, <i>before you draw</i>, you may end the round — but only if a full cycle has passed with no new meld and no sapaw on the table. Once you draw, you can't call this turn. Lowest count wins.</li>
       <li>Never laid a meld on the table? You're <b>burned</b> — can't call or win. Melds kept in hand don't count at the tally.</li>
     </ul>
     <div class="modal-actions"><button id="rulesClose">Got it</button></div>
@@ -658,7 +658,7 @@ function render(){
 function canArmAdd(){return G&&!G.over&&G.current===0&&G.phase==="play"&&armedId!=null;}
 function findArmedCard(){if(armedId==null)return null;const me=G.players[0];return me.hand.concat(me.groups.flat()).find(c=>cardId(c)===armedId)||null;}
 function armedCardCanJoin(meld){const c=findArmedCard();return c?canAddToMeld(meld,c):false;}
-function callViable(){const me=G.players[0];return me.hasMelded&&(G.turnCount-G.lastMeldTurn)>=3&&(G.turnCount-G.lastSapawTurn)>=3;}
+function callViable(i){const p=G.players[i];return p.hasMelded&&(G.turnCount-G.lastMeldTurn)>=3&&(G.turnCount-G.lastSapawTurn)>=3;}
 
 function renderControls(){
   const c=$("controls");c.innerHTML="";
@@ -679,17 +679,18 @@ function renderControls(){
     return;
   }
   const me=G.players[0];
+  const myTurnDraw=!G.over&&G.current===0&&G.phase==="draw";
   const myTurnPlay=!G.over&&G.current===0&&G.phase==="play";
 
-  // Call — ALWAYS visible
+  // Call — ALWAYS visible, but only callable BEFORE drawing when the cycle is quiet
   const callBtn=mkBtn("Call (end round)","info",humanCall);
-  callBtn.disabled=!(myTurnPlay&&callViable());
+  callBtn.disabled=!(myTurnDraw&&callViable(0));
   if(G.over)callBtn.title="Round over";
-  else if(!me.hasMelded)callBtn.title="Lay a meld on the table first";
   else if(G.current!==0)callBtn.title="Wait for your turn";
-  else if(G.phase!=="play")callBtn.title="Draw first";
-  else if(!callViable())callBtn.title="A meld or sapaw happened this cycle — can't call yet";
-  else callBtn.title="End the round and count points";
+  else if(G.phase!=="draw")callBtn.title="You already drew — you can't call this turn";
+  else if(!me.hasMelded)callBtn.title="Lay a meld on the table first";
+  else if(!callViable(0))callBtn.title="A meld or sapaw happened this cycle — can't call yet";
+  else callBtn.title="Call now, before drawing, to end the round";
   c.appendChild(callBtn);
 
   // Discard — ALWAYS visible
@@ -701,7 +702,7 @@ function renderControls(){
   const hint=document.createElement("div");hint.className="hint";
   if(G.over)hint.textContent="Round over — deal again to keep playing.";
   else if(G.current!==0)hint.textContent="You can rearrange and group your cards while you wait.";
-  else if(G.phase==="draw")hint.textContent="Draw from the pile, or the discard if it glows.";
+  else if(G.phase==="draw")hint.innerHTML="Draw from the pile or discard — or <b>Call</b> now (before drawing) if the table's been quiet a full cycle.";
   else hint.innerHTML="Drag to group; tap a card then a glowing meld to <b>sapaw</b>; drag a card onto the discard to end your turn.";
   c.appendChild(hint);
 }
@@ -870,7 +871,7 @@ function discardCard(id){
   if(maybeWin(0))return;
   endTurn();
 }
-function humanCall(){ if(G.current!==0||G.phase!=="play"||!callViable())return; log(`You called the round.`,true); endRound(0,"call"); }
+function humanCall(){ if(G.current!==0||G.phase!=="draw"||!callViable(0))return; log(`You called the round before drawing.`,true); endRound(0,"call"); }
 
 /* ===================== turn flow ===================== */
 function endTurn(){
@@ -905,6 +906,17 @@ function aiTurn(){
   if(G.over)return;
   const i=G.current;const p=G.players[i];
   resetFly();
+  // Call BEFORE drawing, only when the table has been quiet a full cycle
+  if(G.phase==="draw"&&callViable(i)){
+    const pts=countedPoints(p);
+    const eligible=G.players.filter(x=>x.hasMelded);
+    const lowest=Math.min(...eligible.map(x=>countedPoints(x)));
+    const burnedOpp=G.players.some((x,idx)=>idx!==i&&!x.hasMelded);
+    if(pts<=lowest&&(pts<=15||burnedOpp)){
+      log(`${p.name} called the round before drawing.`,false);
+      return endRound(i,"call");
+    }
+  }
   if(G.phase==="draw"){
     const top=G.discard[G.discard.length-1];let take=null;
     if(top){const mc=buildMeldWithCard(p.hand,top);if(mc)take=mc;}
@@ -947,12 +959,6 @@ function aiTurn(){
       }
       if(maybeWin(i))return;
     }
-  }
-  const pts=countedPoints(p);const cycleClear=(G.turnCount-G.lastMeldTurn)>=3&&(G.turnCount-G.lastSapawTurn)>=3;
-  if(p.hasMelded&&cycleClear&&pts<=8&&G.stock.length<26){
-    const eligible=G.players.filter(x=>x.hasMelded);
-    const lowest=Math.min(...eligible.map(x=>countedPoints(x)));
-    if(pts<=lowest){log(`${p.name} called the round.`,false);return endRound(i,"call");}
   }
   const card=aiChooseDiscard(p.hand);
   p.hand=p.hand.filter(c=>cardId(c)!==cardId(card));
